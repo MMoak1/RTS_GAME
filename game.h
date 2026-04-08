@@ -19,7 +19,9 @@ typedef enum {
 typedef enum {
     TYPE_BASE = 0,
     TYPE_MEDIC,
-    TYPE_BRUISER
+    TYPE_BRUISER,
+    TYPE_AGGRESSOR,
+    TYPE_REPELLER
 } UnitType;
 
 typedef enum {
@@ -41,9 +43,13 @@ typedef struct {
     UnitType type;
     Vec2 position;
     Vec2 target_pos;
+    Vec2 velocity;
     UnitState state;
     float health;
     float max_health;
+    uint8_t attack_cooldown;
+    uint8_t attack_fx_timer;
+    Vec2 last_attack_target;
 } Unit;
 
 typedef struct {

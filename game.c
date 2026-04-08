@@ -223,34 +223,136 @@ void game_init(GameState* state) {
     grid_build(state);
 }
 
+float pseudo_random_jitter(int unit_id, uint32_t tick_counter) {
+    uint32_t seed = (unit_id * 193) ^ tick_counter;
+    seed = (seed ^ 61) ^ (seed >> 16);
+    seed *= 9;
+    seed = seed ^ (seed >> 4);
+    seed *= 0x27d4eb2d;
+    seed = seed ^ (seed >> 15);
+    return ((seed % 2000) / 1000.0f) - 1.0f;
+}
+
+void tick_movement(GameState* state) {
+    for (int i = 0; i < MAX_UNITS; i++) {
+        if (!state->units[i].active) continue;
+        
+        float ux = state->units[i].position.x;
+        float uy = state->units[i].position.y;
+        
+        if (state->units[i].type == TYPE_BASE) {
+            if (state->units[i].state == UNIT_MOVING) {
+                float force_x = 0;
+                float force_y = 0;
+                
+                int gx = (int)(ux / CELL_SIZE);
+                int gy = (int)(uy / CELL_SIZE);
+                
+                float align_x = 0, align_y = 0;
+                float coh_x = 0, coh_y = 0;
+                int boid_count = 0;
+                
+                for (int cx = gx - 1; cx <= gx + 1; cx++) {
+                    if (cx < 0 || cx >= GRID_WIDTH) continue;
+                    for (int cy = gy - 1; cy <= gy + 1; cy++) {
+                        if (cy < 0 || cy >= GRID_HEIGHT) continue;
+                        int j = state->grid.head[cx][cy];
+                        while (j != -1) {
+                            if (i != j && state->units[j].active && state->units[j].team == state->units[i].team && state->units[j].type == TYPE_BASE) {
+                                float dx = ux - state->units[j].position.x;
+                                float dy = uy - state->units[j].position.y;
+                                float dist_sq = dx*dx + dy*dy;
+                                
+                                if (dist_sq < 40.0f * 40.0f) {
+                                    align_x += state->units[j].velocity.x;
+                                    align_y += state->units[j].velocity.y;
+                                    coh_x += state->units[j].position.x;
+                                    coh_y += state->units[j].position.y;
+                                    boid_count++;
+                                }
+                            }
+                            j = state->grid.next[j];
+                        }
+                    }
+                }
+                
+                if (boid_count > 0) {
+                    align_x /= boid_count;
+                    align_y /= boid_count;
+                    force_x += align_x * 0.05f;
+                    force_y += align_y * 0.05f;
+                    
+                    coh_x /= boid_count;
+                    coh_y /= boid_count;
+                    float cdx = coh_x - ux;
+                    float cdy = coh_y - uy;
+                    float c_dist = sqrtf(cdx*cdx + cdy*cdy);
+                    if (c_dist > 0.1f) {
+                        force_x += (cdx / c_dist) * 0.05f;
+                        force_y += (cdy / c_dist) * 0.05f;
+                    }
+                }
+
+                // Add deterministic "organic" jitter
+                force_x += pseudo_random_jitter(i, state->tick_counter) * 0.15f;
+                force_y += pseudo_random_jitter(i + MAX_UNITS, state->tick_counter) * 0.15f;
+                
+                float tdx = state->units[i].target_pos.x - ux;
+                float tdy = state->units[i].target_pos.y - uy;
+                float tdist = sqrtf(tdx*tdx + tdy*tdy);
+                
+                if (tdist > UNIT_SIZE * 0.5f) {
+                     force_x += (tdx / tdist) * 0.2f;
+                     force_y += (tdy / tdist) * 0.2f;
+                } else {
+                     state->units[i].state = UNIT_IDLE;
+                }
+                
+                state->units[i].velocity.x += force_x;
+                state->units[i].velocity.y += force_y;
+            }
+            
+            float current_speed = sqrtf(state->units[i].velocity.x * state->units[i].velocity.x + state->units[i].velocity.y * state->units[i].velocity.y);
+            float MAX_SPEED = 2.0f;
+            if (current_speed > MAX_SPEED) {
+                state->units[i].velocity.x = (state->units[i].velocity.x / current_speed) * MAX_SPEED;
+                state->units[i].velocity.y = (state->units[i].velocity.y / current_speed) * MAX_SPEED;
+            }
+            
+            state->units[i].position.x += state->units[i].velocity.x;
+            state->units[i].position.y += state->units[i].velocity.y;
+            
+            state->units[i].velocity.x *= 0.95f;
+            state->units[i].velocity.y *= 0.95f;
+            
+        } else {
+            if (state->units[i].state == UNIT_MOVING) {
+                float dx = state->units[i].target_pos.x - ux;
+                float dy = state->units[i].target_pos.y - uy;
+                float dist = sqrtf(dx * dx + dy * dy);
+                
+                if (dist > UNIT_SIZE * 0.5f) {
+                    float speed = 2.0f;
+                    if (state->units[i].type == TYPE_BRUISER) speed = 1.0f;
+                    if (state->units[i].type == TYPE_MEDIC) speed = 2.4f;
+                    
+                    state->units[i].position.x += (dx / dist) * speed;
+                    state->units[i].position.y += (dy / dist) * speed;
+                } else {
+                    state->units[i].state = UNIT_IDLE;
+                }
+            }
+        }
+    }
+}
+
 void game_tick(GameState* state) {
     state->tick_counter++;
     
     tick_medics(state);
     tick_bruisers(state);
     
-    // Process Movement
-    for (int i = 0; i < MAX_UNITS; i++) {
-        if (!state->units[i].active) continue;
-        
-        if (state->units[i].state == UNIT_MOVING) {
-            float dx = state->units[i].target_pos.x - state->units[i].position.x;
-            float dy = state->units[i].target_pos.y - state->units[i].position.y;
-            float dist = sqrtf(dx * dx + dy * dy);
-            
-            if (dist > UNIT_SIZE * 0.5f) { // Stop jittering early
-                // Bruisers construct move 50% slower, medics move 20% faster
-                float speed = 2.0f;
-                if (state->units[i].type == TYPE_BRUISER) speed = 1.0f;
-                if (state->units[i].type == TYPE_MEDIC) speed = 2.4f;
-                
-                state->units[i].position.x += (dx / dist) * speed;
-                state->units[i].position.y += (dy / dist) * speed;
-            } else {
-                state->units[i].state = UNIT_IDLE;
-            }
-        }
-    }
+    tick_movement(state);
     
     // Separation / Collision Avoidance
     resolve_collisions(state);
