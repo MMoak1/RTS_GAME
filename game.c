@@ -27,14 +27,13 @@ void grid_build(GameState* state) {
     }
 }
 
-#define UNIT_SIZE 10.0f
-
 void resolve_collisions(GameState* state) {
     for (int i = 0; i < MAX_UNITS; i++) {
         if (!state->units[i].active) continue;
 
         float ux = state->units[i].position.x;
         float uy = state->units[i].position.y;
+        float r_i = state->units[i].radius;
         
         int gx = (int)(ux / CELL_SIZE);
         int gy = (int)(uy / CELL_SIZE);
@@ -50,6 +49,7 @@ void resolve_collisions(GameState* state) {
                 int j = state->grid.head[cx][cy];
                 while (j != -1) {
                     if (i != j && state->units[j].active) {
+                        float r_j = state->units[j].radius;
                         float dx = ux - state->units[j].position.x;
                         float dy = uy - state->units[j].position.y;
                         
@@ -58,13 +58,16 @@ void resolve_collisions(GameState* state) {
                             dy = (i > j) ? 0.1f : -0.1f;
                         }
 
-                        if (fabsf(dx) < UNIT_SIZE && fabsf(dy) < UNIT_SIZE) {
+                        float combined_r = r_i + r_j;
+                        if (fabsf(dx) < combined_r && fabsf(dy) < combined_r) {
                             float dist_sq = dx * dx + dy * dy;
-                            if (dist_sq < UNIT_SIZE * UNIT_SIZE) {
+                            if (dist_sq < combined_r * combined_r) {
                                 float dist = sqrtf(dist_sq);
-                                float overlap = UNIT_SIZE - dist;
-                                push_x += (dx / dist) * overlap * 0.5f;
-                                push_y += (dy / dist) * overlap * 0.5f;
+                                float overlap = combined_r - dist;
+                                // Heavy buildings can't be pushed much, so standard units take the brunt
+                                float push_factor = (state->units[i].type >= TYPE_HQ) ? 0.1f : 0.5f;
+                                push_x += (dx / dist) * overlap * push_factor;
+                                push_y += (dy / dist) * overlap * push_factor;
                             }
                         }
                     }
@@ -73,8 +76,11 @@ void resolve_collisions(GameState* state) {
             }
         }
         
-        state->units[i].position.x += push_x;
-        state->units[i].position.y += push_y;
+        // Stationary buildings shouldn't be pushed
+        if (state->units[i].type < TYPE_HQ) {
+            state->units[i].position.x += push_x;
+            state->units[i].position.y += push_y;
+        }
     }
 }
 
@@ -184,40 +190,81 @@ void tick_bruisers(GameState* state) {
     }
 }
 
+bool game_spawn_unit(GameState* state, Team team, UnitType type, float x, float y) {
+    for (int i = 0; i < MAX_UNITS; i++) {
+        if (!state->units[i].active) {
+            state->units[i].active = true;
+            state->units[i].selected = false;
+            state->units[i].team = team;
+            state->units[i].type = type;
+            state->units[i].position.x = x;
+            state->units[i].position.y = y;
+            state->units[i].velocity = (Vec2){0,0};
+            state->units[i].state = UNIT_IDLE;
+            state->units[i].attack_cooldown = 0;
+            state->units[i].attack_fx_timer = 0;
+            
+            if (type == TYPE_HQ) {
+                state->units[i].radius = 20.0f;
+                state->units[i].max_health = 5000.0f;
+            } else if (type == TYPE_FACTORY || type == TYPE_GENERATOR) {
+                state->units[i].radius = 15.0f;
+                state->units[i].max_health = 1000.0f;
+            } else if (type == TYPE_BRUISER) {
+                state->units[i].radius = 8.0f;
+                state->units[i].max_health = 300.0f;
+            } else if (type == TYPE_MEDIC) {
+                state->units[i].radius = 4.0f;
+                state->units[i].max_health = 50.0f;
+            } else { 
+                state->units[i].radius = 5.0f;
+                state->units[i].max_health = 100.0f;
+            }
+            state->units[i].health = state->units[i].max_health;
+            if (i >= state->unit_count) state->unit_count = i + 1;
+            return true;
+        }
+    }
+    return false;
+}
+
 void game_init(GameState* state) {
     memset(state, 0, sizeof(GameState));
     grid_clear(state);
     
-    // Spawn some initial test units
-    for(int i = 0; i < 100; i++) {
-        state->units[i].active = true;
-        state->units[i].selected = false;
-        state->units[i].team = TEAM_BLUE;
+    state->players[TEAM_BLUE].points = 100.0f;
+    state->players[TEAM_RED].points = 100.0f;
+    
+    // Spawn Blue HQ
+    game_spawn_unit(state, TEAM_BLUE, TYPE_HQ, 100.0f, 300.0f);
+    
+    // Spawn some initial blue test units
+    for(int i = 0; i < 150; i++) {
+        UnitType type = TYPE_BASE;
+        if (i % 20 == 0) type = TYPE_MEDIC;
+        else if (i % 10 == 0) type = TYPE_BRUISER;
+        else if (i % 8 == 0) type = TYPE_AGGRESSOR;
+        else if (i % 7 == 0) type = TYPE_REPELLER;
         
-        if (i % 10 == 0) state->units[i].type = TYPE_MEDIC;
-        else if (i % 5 == 0) state->units[i].type = TYPE_BRUISER;
-        else state->units[i].type = TYPE_BASE;
-        state->units[i].position.x = 100.0f + (i % 10) * 15.0f;
-        state->units[i].position.y = 100.0f + (i / 10) * 15.0f;
-        state->units[i].health = 100.0f;
-        state->units[i].max_health = 100.0f;
-        state->units[i].state = UNIT_IDLE;
+        float x = 150.0f + (i % 15) * 15.0f;
+        float y = 200.0f + (i / 15) * 15.0f;
+        game_spawn_unit(state, TEAM_BLUE, type, x, y);
     }
     
-    for(int i = 0; i < 100; i++) {
-        int idx = 100 + i; // Offset to avoid overwriting blue
-        state->units[idx].active = true;
-        state->units[idx].selected = false;
-        state->units[idx].team = TEAM_RED;
+    // Spawn Red HQ
+    game_spawn_unit(state, TEAM_RED, TYPE_HQ, 700.0f, 300.0f);
+    
+    // Spawn some red test units
+    for(int i = 0; i < 150; i++) {
+        UnitType type = TYPE_BASE;
+        if (i % 20 == 0) type = TYPE_MEDIC;
+        else if (i % 10 == 0) type = TYPE_BRUISER;
+        else if (i % 8 == 0) type = TYPE_AGGRESSOR;
+        else if (i % 7 == 0) type = TYPE_REPELLER;
         
-        if (i % 10 == 0) state->units[idx].type = TYPE_MEDIC;
-        else if (i % 5 == 0) state->units[idx].type = TYPE_BRUISER;
-        else state->units[idx].type = TYPE_BASE;
-        state->units[idx].position.x = 600.0f + (i % 10) * 15.0f;
-        state->units[idx].position.y = 400.0f + (i / 10) * 15.0f;
-        state->units[idx].health = 100.0f;
-        state->units[idx].max_health = 100.0f;
-        state->units[idx].state = UNIT_IDLE;
+        float x = 500.0f + (i % 15) * 15.0f;
+        float y = 200.0f + (i / 15) * 15.0f;
+        game_spawn_unit(state, TEAM_RED, type, x, y);
     }
     
     grid_build(state);
@@ -240,8 +287,8 @@ void tick_movement(GameState* state) {
         float ux = state->units[i].position.x;
         float uy = state->units[i].position.y;
         
-        if (state->units[i].type == TYPE_BASE) {
-            if (state->units[i].state == UNIT_MOVING) {
+        if (state->units[i].type == TYPE_BASE || state->units[i].type == TYPE_AGGRESSOR || state->units[i].type == TYPE_REPELLER) {
+            if (state->units[i].state == UNIT_MOVING || state->units[i].type == TYPE_AGGRESSOR || state->units[i].type == TYPE_REPELLER) {
                 float force_x = 0;
                 float force_y = 0;
                 
@@ -252,23 +299,39 @@ void tick_movement(GameState* state) {
                 float coh_x = 0, coh_y = 0;
                 int boid_count = 0;
                 
+                float closest_enemy_sq = 200.0f * 200.0f; // Limit aggro range
+                float closest_enemy_dx = 0;
+                float closest_enemy_dy = 0;
+                float closest_enemy_health = 0;
+                bool found_enemy = false;
+
                 for (int cx = gx - 1; cx <= gx + 1; cx++) {
                     if (cx < 0 || cx >= GRID_WIDTH) continue;
                     for (int cy = gy - 1; cy <= gy + 1; cy++) {
                         if (cy < 0 || cy >= GRID_HEIGHT) continue;
                         int j = state->grid.head[cx][cy];
                         while (j != -1) {
-                            if (i != j && state->units[j].active && state->units[j].team == state->units[i].team && state->units[j].type == TYPE_BASE) {
+                            if (i != j && state->units[j].active) {
                                 float dx = ux - state->units[j].position.x;
                                 float dy = uy - state->units[j].position.y;
                                 float dist_sq = dx*dx + dy*dy;
                                 
-                                if (dist_sq < 40.0f * 40.0f) {
-                                    align_x += state->units[j].velocity.x;
-                                    align_y += state->units[j].velocity.y;
-                                    coh_x += state->units[j].position.x;
-                                    coh_y += state->units[j].position.y;
-                                    boid_count++;
+                                if (state->units[j].team == state->units[i].team) {
+                                    if (state->units[j].type == state->units[i].type && dist_sq < 40.0f * 40.0f) {
+                                        align_x += state->units[j].velocity.x;
+                                        align_y += state->units[j].velocity.y;
+                                        coh_x += state->units[j].position.x;
+                                        coh_y += state->units[j].position.y;
+                                        boid_count++;
+                                    }
+                                } else {
+                                    if (dist_sq < closest_enemy_sq) {
+                                        closest_enemy_sq = dist_sq;
+                                        closest_enemy_dx = dx;
+                                        closest_enemy_dy = dy;
+                                        closest_enemy_health = state->units[j].health;
+                                        found_enemy = true;
+                                    }
                                 }
                             }
                             j = state->grid.next[j];
@@ -297,15 +360,45 @@ void tick_movement(GameState* state) {
                 force_x += pseudo_random_jitter(i, state->tick_counter) * 0.15f;
                 force_y += pseudo_random_jitter(i + MAX_UNITS, state->tick_counter) * 0.15f;
                 
-                float tdx = state->units[i].target_pos.x - ux;
-                float tdy = state->units[i].target_pos.y - uy;
-                float tdist = sqrtf(tdx*tdx + tdy*tdy);
-                
-                if (tdist > UNIT_SIZE * 0.5f) {
-                     force_x += (tdx / tdist) * 0.2f;
-                     force_y += (tdy / tdist) * 0.2f;
-                } else {
-                     state->units[i].state = UNIT_IDLE;
+                // Aggressor/Repeller forces based on Strength (Health)
+                if (found_enemy) {
+                    float dist_e = sqrtf(closest_enemy_sq);
+                    if (dist_e > 0.1f) {
+                        bool local_advantage = (state->units[i].health >= closest_enemy_health);
+                        
+                        if (state->units[i].type == TYPE_AGGRESSOR) {
+                            if (local_advantage) {
+                                force_x -= (closest_enemy_dx / dist_e) * 0.5f; // Hard charge if stronger
+                                force_y -= (closest_enemy_dy / dist_e) * 0.5f;
+                            } else {
+                                force_x -= (closest_enemy_dx / dist_e) * 0.1f; // Slight approach if weaker
+                                force_y -= (closest_enemy_dy / dist_e) * 0.1f;
+                            }
+                        } else if (state->units[i].type == TYPE_REPELLER) {
+                            if (dist_e < 120.0f) {
+                                if (!local_advantage) {
+                                    force_x += (closest_enemy_dx / dist_e) * 0.7f; // Kite swiftly if weaker
+                                    force_y += (closest_enemy_dy / dist_e) * 0.7f;
+                                } else {
+                                    force_x -= (closest_enemy_dx / dist_e) * 0.2f; // Push forward if stronger
+                                    force_y -= (closest_enemy_dy / dist_e) * 0.2f;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (state->units[i].state == UNIT_MOVING) {
+                    float tdx = state->units[i].target_pos.x - ux;
+                    float tdy = state->units[i].target_pos.y - uy;
+                    float tdist = sqrtf(tdx*tdx + tdy*tdy);
+                    
+                    if (tdist > state->units[i].radius * 1.5f) {
+                         force_x += (tdx / tdist) * 0.2f;
+                         force_y += (tdy / tdist) * 0.2f;
+                    } else {
+                         state->units[i].state = UNIT_IDLE;
+                    }
                 }
                 
                 state->units[i].velocity.x += force_x;
@@ -325,13 +418,13 @@ void tick_movement(GameState* state) {
             state->units[i].velocity.x *= 0.95f;
             state->units[i].velocity.y *= 0.95f;
             
-        } else {
+        } else if (state->units[i].type < TYPE_HQ) {
             if (state->units[i].state == UNIT_MOVING) {
                 float dx = state->units[i].target_pos.x - ux;
                 float dy = state->units[i].target_pos.y - uy;
                 float dist = sqrtf(dx * dx + dy * dy);
                 
-                if (dist > UNIT_SIZE * 0.5f) {
+                if (dist > state->units[i].radius * 1.5f) {
                     float speed = 2.0f;
                     if (state->units[i].type == TYPE_BRUISER) speed = 1.0f;
                     if (state->units[i].type == TYPE_MEDIC) speed = 2.4f;
@@ -346,9 +439,90 @@ void tick_movement(GameState* state) {
     }
 }
 
+void tick_combat(GameState* state) {
+    for (int i = 0; i < MAX_UNITS; i++) {
+        if (!state->units[i].active) continue;
+        
+        if (state->units[i].attack_cooldown > 0) {
+            state->units[i].attack_cooldown--;
+        }
+        if (state->units[i].attack_fx_timer > 0) {
+            state->units[i].attack_fx_timer--;
+        }
+
+        if (state->units[i].attack_cooldown == 0) {
+            float ux = state->units[i].position.x;
+            float uy = state->units[i].position.y;
+            int gx = (int)(ux / CELL_SIZE);
+            int gy = (int)(uy / CELL_SIZE);
+            
+            float closest_sq = 60.0f * 60.0f;
+            int target_idx = -1;
+
+            for (int cx = gx - 1; cx <= gx + 1; cx++) {
+                if (cx < 0 || cx >= GRID_WIDTH) continue;
+                for (int cy = gy - 1; cy <= gy + 1; cy++) {
+                    if (cy < 0 || cy >= GRID_HEIGHT) continue;
+
+                    int j = state->grid.head[cx][cy];
+                    while (j != -1) {
+                        if (state->units[j].active && state->units[j].team != state->units[i].team && state->units[j].health > 0) {
+                            float dx = state->units[j].position.x - ux;
+                            float dy = state->units[j].position.y - uy;
+                            float dsq = dx*dx + dy*dy;
+                            if (dsq < closest_sq) {
+                                closest_sq = dsq;
+                                target_idx = j;
+                            }
+                        }
+                        j = state->grid.next[j];
+                    }
+                }
+            }
+
+            if (target_idx != -1) {
+                state->units[target_idx].health -= 15.0f;
+                state->units[i].attack_cooldown = 45; // 0.75 seconds
+                state->units[i].attack_fx_timer = 6;
+                state->units[i].last_attack_target = state->units[target_idx].position;
+            }
+        }
+    }
+    
+    // Death Cleanup
+    for (int i = 0; i < MAX_UNITS; i++) {
+        if (state->units[i].active && state->units[i].health <= 0) {
+            if (state->units[i].type == TYPE_HQ) {
+                state->players[state->units[i].team].defeated = true;
+            }
+            state->units[i].active = false;
+        }
+    }
+}
+
+void tick_economy(GameState* state) {
+    if (state->players[TEAM_BLUE].defeated || state->players[TEAM_RED].defeated) {
+        return;
+    }
+    
+    state->players[TEAM_BLUE].points += 1.0f / 60.0f; // passive income
+    state->players[TEAM_RED].points += 1.0f / 60.0f;
+    
+    for (int i=0; i<MAX_UNITS; i++) {
+        if (state->units[i].active) {
+            if (state->units[i].type == TYPE_HQ) {
+                state->players[state->units[i].team].points += 2.0f / 60.0f;
+            } else if (state->units[i].type == TYPE_GENERATOR) {
+                state->players[state->units[i].team].points += 5.0f / 60.0f;
+            }
+        }
+    }
+}
+
 void game_tick(GameState* state) {
     state->tick_counter++;
     
+    tick_economy(state);
     tick_medics(state);
     tick_bruisers(state);
     
@@ -357,13 +531,16 @@ void game_tick(GameState* state) {
     // Separation / Collision Avoidance
     resolve_collisions(state);
     
-    // Rebuild spatial grid since positions changed
+    // Hitscan Combat
+    tick_combat(state);
+    
+    // Rebuild spatial grid since positions changed or units died
     grid_build(state);
 }
 
 void command_move_selected(GameState* state, float target_x, float target_y) {
     for (int i = 0; i < MAX_UNITS; i++) {
-        if (!state->units[i].active || !state->units[i].selected) continue;
+        if (!state->units[i].active || !state->units[i].selected || state->units[i].type >= TYPE_HQ) continue;
         
         state->units[i].state = UNIT_MOVING;
         state->units[i].target_pos.x = target_x;

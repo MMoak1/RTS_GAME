@@ -21,7 +21,10 @@ typedef enum {
     TYPE_MEDIC,
     TYPE_BRUISER,
     TYPE_AGGRESSOR,
-    TYPE_REPELLER
+    TYPE_REPELLER,
+    TYPE_HQ,
+    TYPE_FACTORY,
+    TYPE_GENERATOR
 } UnitType;
 
 typedef enum {
@@ -44,6 +47,7 @@ typedef struct {
     Vec2 position;
     Vec2 target_pos;
     Vec2 velocity;
+    float radius;
     UnitState state;
     float health;
     float max_health;
@@ -53,11 +57,9 @@ typedef struct {
 } Unit;
 
 typedef struct {
-    bool active;
-    Team team;
-    Vec2 position;
-    float health;
-} Building;
+    float points;
+    bool defeated;
+} PlayerData;
 
 typedef struct {
     int head[GRID_WIDTH][GRID_HEIGHT]; // Index of first unit in cell. -1 if empty.
@@ -65,11 +67,9 @@ typedef struct {
 } SpatialGrid;
 
 typedef struct {
+    PlayerData players[2];
     Unit units[MAX_UNITS];
     int unit_count; // Number of currently active units, or max active index
-    
-    Building buildings[MAX_BUILDINGS];
-    int building_count;
     
     SpatialGrid grid;
     
@@ -79,6 +79,8 @@ typedef struct {
 
 // Initializes the game state
 void game_init(GameState* state);
+
+bool game_spawn_unit(GameState* state, Team team, UnitType type, float x, float y);
 
 // Runs one fixed step of logic
 void game_tick(GameState* state);

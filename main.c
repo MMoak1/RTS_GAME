@@ -62,7 +62,7 @@ int main(void) {
             }
             
             for (int i = 0; i < MAX_UNITS; i++) {
-                if (!game_state.units[i].active || game_state.units[i].team != TEAM_BLUE) continue;
+                if (!game_state.units[i].active || game_state.units[i].team != TEAM_BLUE || game_state.units[i].type >= TYPE_HQ) continue;
                 Vector2 pos = { game_state.units[i].position.x + 5, game_state.units[i].position.y + 5 }; // center
                 game_state.units[i].selected = CheckCollisionPointRec(pos, rec);
             }
@@ -70,6 +70,49 @@ int main(void) {
         
         if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)) {
             command_move_selected(&game_state, mouse_world.x, mouse_world.y);
+        }
+        
+        // Economy Hotkeys
+        if (!game_state.players[TEAM_BLUE].defeated) {
+            if (IsKeyPressed(KEY_F)) { // Build Factory (100 pts)
+                if (game_state.players[TEAM_BLUE].points >= 100.0f) {
+                    if (game_spawn_unit(&game_state, TEAM_BLUE, TYPE_FACTORY, mouse_world.x, mouse_world.y)) {
+                        game_state.players[TEAM_BLUE].points -= 100.0f;
+                    }
+                }
+            }
+            if (IsKeyPressed(KEY_G)) { // Build Generator (50 pts)
+                if (game_state.players[TEAM_BLUE].points >= 50.0f) {
+                    if (game_spawn_unit(&game_state, TEAM_BLUE, TYPE_GENERATOR, mouse_world.x, mouse_world.y)) {
+                        game_state.players[TEAM_BLUE].points -= 50.0f;
+                    }
+                }
+            }
+            if (IsKeyPressed(KEY_T)) { // Build Troop (10 pts)
+                if (game_state.players[TEAM_BLUE].points >= 10.0f) {
+                    // Find nearest blue factory to mouse
+                    float best_dist = 999999.0f;
+                    int factory_idx = -1;
+                    for(int i=0; i < MAX_UNITS; i++) {
+                        if (game_state.units[i].active && game_state.units[i].team == TEAM_BLUE && game_state.units[i].type == TYPE_FACTORY) {
+                            float dx = game_state.units[i].position.x - mouse_world.x;
+                            float dy = game_state.units[i].position.y - mouse_world.y;
+                            float dsq = dx*dx + dy*dy;
+                            if (dsq < best_dist) {
+                                best_dist = dsq;
+                                factory_idx = i;
+                            }
+                        }
+                    }
+                    if (factory_idx != -1) {
+                        if (game_spawn_unit(&game_state, TEAM_BLUE, TYPE_BASE, 
+                            game_state.units[factory_idx].position.x + 20, 
+                            game_state.units[factory_idx].position.y + 20)) {
+                            game_state.players[TEAM_BLUE].points -= 10.0f;
+                        }
+                    }
+                }
+            }
         }
 
         // Logic Tick (Fixed Timestep)
@@ -94,13 +137,34 @@ int main(void) {
             int px = (int)game_state.units[i].position.x;
             int py = (int)game_state.units[i].position.y;
             
-            if (game_state.units[i].type == TYPE_BRUISER) {
+            if (game_state.units[i].type == TYPE_HQ) {
+                DrawRectangle(px - 15, py - 15, 40, 40, c);
+                DrawRectangleLines(px - 15, py - 15, 40, 40, WHITE);
+            } else if (game_state.units[i].type == TYPE_FACTORY) {
+                DrawRectangle(px - 10, py - 10, 30, 30, c);
+                DrawRectangleLines(px - 10, py - 10, 30, 30, YELLOW);
+            } else if (game_state.units[i].type == TYPE_GENERATOR) {
+                DrawRectangle(px - 10, py - 10, 30, 30, c);
+                DrawRectangleLines(px - 10, py - 10, 30, 30, GREEN);
+            } else if (game_state.units[i].type == TYPE_BRUISER) {
                 DrawRectangle(px - 3, py - 3, 16, 16, c);
             } else if (game_state.units[i].type == TYPE_MEDIC) {
                 DrawRectangle(px + 1, py + 1, 8, 8, c);
                 DrawRectangleLines(px, py, 10, 10, WHITE);
+            } else if (game_state.units[i].type == TYPE_AGGRESSOR) {
+                DrawRectangle(px, py, 10, 10, c);
+                DrawRectangleLines(px - 1, py - 1, 12, 12, ORANGE);
+            } else if (game_state.units[i].type == TYPE_REPELLER) {
+                DrawRectangle(px + 2, py + 2, 6, 6, c);
+                DrawRectangleLines(px - 1, py - 1, 12, 12, PURPLE);
             } else {
                 DrawRectangle(px, py, 10, 10, c);
+            }
+            
+            if (game_state.units[i].attack_fx_timer > 0) {
+                DrawLineEx((Vector2){game_state.units[i].position.x + 5, game_state.units[i].position.y + 5}, 
+                           (Vector2){game_state.units[i].last_attack_target.x + 5, game_state.units[i].last_attack_target.y + 5}, 
+                           1.5f, (game_state.units[i].team == TEAM_BLUE) ? SKYBLUE : PINK);
             }
             
             if (game_state.units[i].selected) {
@@ -121,6 +185,18 @@ int main(void) {
         EndMode2D();
 
         DrawFPS(10, 10);
+        
+        // Draw UI
+        DrawText(TextFormat("Blue Points: %d", (int)game_state.players[TEAM_BLUE].points), 10, 40, 20, BLUE);
+        DrawText(TextFormat("Red Points: %d", (int)game_state.players[TEAM_RED].points), 10, 70, 20, RED);
+        DrawText("Hotkeys: [F]actory (100) | [G]enerator (50) | [T]roop (10) at nearest factory", 10, screenHeight - 30, 20, DARKGRAY);
+        
+        if (game_state.players[TEAM_BLUE].defeated) {
+            DrawText("BLUE DEFEATED!", screenWidth/2 - 200, screenHeight/2, 50, RED);
+        } else if (game_state.players[TEAM_RED].defeated) {
+            DrawText("RED DEFEATED!", screenWidth/2 - 200, screenHeight/2, 50, BLUE);
+        }
+        
         EndDrawing();
     }
 
