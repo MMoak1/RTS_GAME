@@ -1,4 +1,5 @@
 #include "game.h"
+#include "ai.h"
 #include <string.h>
 #include <math.h>
 
@@ -232,38 +233,38 @@ void game_init(GameState* state) {
     memset(state, 0, sizeof(GameState));
     grid_clear(state);
     
-    state->players[TEAM_BLUE].points = 100.0f;
-    state->players[TEAM_RED].points = 100.0f;
+    state->players[TEAM_BLUE].points = 150.0f;
+    state->players[TEAM_RED].points = 150.0f;
     
     // Spawn Blue HQ
     game_spawn_unit(state, TEAM_BLUE, TYPE_HQ, 100.0f, 300.0f);
+    game_spawn_unit(state, TEAM_BLUE, TYPE_GENERATOR, 100.0f, 200.0f);
+    game_spawn_unit(state, TEAM_BLUE, TYPE_FACTORY, 100.0f, 400.0f);
     
     // Spawn some initial blue test units
-    for(int i = 0; i < 150; i++) {
+    for(int i = 0; i < 20; i++) {
         UnitType type = TYPE_BASE;
-        if (i % 20 == 0) type = TYPE_MEDIC;
-        else if (i % 10 == 0) type = TYPE_BRUISER;
-        else if (i % 8 == 0) type = TYPE_AGGRESSOR;
+        if (i % 8 == 0) type = TYPE_AGGRESSOR;
         else if (i % 7 == 0) type = TYPE_REPELLER;
         
-        float x = 150.0f + (i % 15) * 15.0f;
-        float y = 200.0f + (i / 15) * 15.0f;
+        float x = 200.0f + (i % 5) * 15.0f;
+        float y = 250.0f + (i / 5) * 15.0f;
         game_spawn_unit(state, TEAM_BLUE, type, x, y);
     }
     
     // Spawn Red HQ
     game_spawn_unit(state, TEAM_RED, TYPE_HQ, 700.0f, 300.0f);
+    game_spawn_unit(state, TEAM_RED, TYPE_GENERATOR, 700.0f, 200.0f);
+    game_spawn_unit(state, TEAM_RED, TYPE_FACTORY, 700.0f, 400.0f);
     
     // Spawn some red test units
-    for(int i = 0; i < 150; i++) {
+    for(int i = 0; i < 20; i++) {
         UnitType type = TYPE_BASE;
-        if (i % 20 == 0) type = TYPE_MEDIC;
-        else if (i % 10 == 0) type = TYPE_BRUISER;
-        else if (i % 8 == 0) type = TYPE_AGGRESSOR;
+        if (i % 8 == 0) type = TYPE_AGGRESSOR;
         else if (i % 7 == 0) type = TYPE_REPELLER;
         
-        float x = 500.0f + (i % 15) * 15.0f;
-        float y = 200.0f + (i / 15) * 15.0f;
+        float x = 600.0f + (i % 5) * 15.0f;
+        float y = 250.0f + (i / 5) * 15.0f;
         game_spawn_unit(state, TEAM_RED, type, x, y);
     }
     
@@ -451,17 +452,33 @@ void tick_combat(GameState* state) {
         }
 
         if (state->units[i].attack_cooldown == 0) {
+            if (state->units[i].type == TYPE_FACTORY || state->units[i].type == TYPE_GENERATOR) continue;
+
             float ux = state->units[i].position.x;
             float uy = state->units[i].position.y;
             int gx = (int)(ux / CELL_SIZE);
             int gy = (int)(uy / CELL_SIZE);
             
-            float closest_sq = 60.0f * 60.0f;
+            float attack_range_sq = 60.0f * 60.0f;
+            float damage = 15.0f;
+            int cooldown = 45; // 0.75 seconds
+            int fx = 6;
+            int sr = 1;
+            
+            if (state->units[i].type == TYPE_HQ) {
+                attack_range_sq = 200.0f * 200.0f;
+                damage = 100.0f; // One shot
+                cooldown = 30; // 0.5 seconds
+                fx = 15;
+                sr = 4; // Check 4 cells out
+            }
+
+            float closest_sq = attack_range_sq;
             int target_idx = -1;
 
-            for (int cx = gx - 1; cx <= gx + 1; cx++) {
+            for (int cx = gx - sr; cx <= gx + sr; cx++) {
                 if (cx < 0 || cx >= GRID_WIDTH) continue;
-                for (int cy = gy - 1; cy <= gy + 1; cy++) {
+                for (int cy = gy - sr; cy <= gy + sr; cy++) {
                     if (cy < 0 || cy >= GRID_HEIGHT) continue;
 
                     int j = state->grid.head[cx][cy];
@@ -481,9 +498,9 @@ void tick_combat(GameState* state) {
             }
 
             if (target_idx != -1) {
-                state->units[target_idx].health -= 15.0f;
-                state->units[i].attack_cooldown = 45; // 0.75 seconds
-                state->units[i].attack_fx_timer = 6;
+                state->units[target_idx].health -= damage;
+                state->units[i].attack_cooldown = cooldown;
+                state->units[i].attack_fx_timer = fx;
                 state->units[i].last_attack_target = state->units[target_idx].position;
             }
         }
@@ -514,6 +531,20 @@ void tick_economy(GameState* state) {
                 state->players[state->units[i].team].points += 2.0f / 60.0f;
             } else if (state->units[i].type == TYPE_GENERATOR) {
                 state->players[state->units[i].team].points += 5.0f / 60.0f;
+            } else if (state->units[i].type == TYPE_FACTORY) {
+                if ((state->tick_counter + i) % 180 == 0) { // Produce 1 free unit every 3 seconds
+                    float sx = state->units[i].position.x + 30.0f * (state->units[i].team == TEAM_BLUE ? 1 : -1);
+                    float sy = state->units[i].position.y + (((i % 3) - 1) * 15.0f);
+                    
+                    int r = (state->tick_counter + i) % 100;
+                    UnitType type = TYPE_BASE;
+                    if (r < 10) type = TYPE_BRUISER;
+                    else if (r < 20) type = TYPE_AGGRESSOR;
+                    else if (r < 25) type = TYPE_REPELLER;
+                    else if (r < 30) type = TYPE_MEDIC;
+                    
+                    game_spawn_unit(state, state->units[i].team, type, sx, sy);
+                }
             }
         }
     }
@@ -521,6 +552,9 @@ void tick_economy(GameState* state) {
 
 void game_tick(GameState* state) {
     state->tick_counter++;
+    
+    // AI decisions
+    ai_tick(state, TEAM_RED);
     
     tick_economy(state);
     tick_medics(state);

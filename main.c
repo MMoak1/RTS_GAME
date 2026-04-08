@@ -88,31 +88,7 @@ int main(void) {
                     }
                 }
             }
-            if (IsKeyPressed(KEY_T)) { // Build Troop (10 pts)
-                if (game_state.players[TEAM_BLUE].points >= 10.0f) {
-                    // Find nearest blue factory to mouse
-                    float best_dist = 999999.0f;
-                    int factory_idx = -1;
-                    for(int i=0; i < MAX_UNITS; i++) {
-                        if (game_state.units[i].active && game_state.units[i].team == TEAM_BLUE && game_state.units[i].type == TYPE_FACTORY) {
-                            float dx = game_state.units[i].position.x - mouse_world.x;
-                            float dy = game_state.units[i].position.y - mouse_world.y;
-                            float dsq = dx*dx + dy*dy;
-                            if (dsq < best_dist) {
-                                best_dist = dsq;
-                                factory_idx = i;
-                            }
-                        }
-                    }
-                    if (factory_idx != -1) {
-                        if (game_spawn_unit(&game_state, TEAM_BLUE, TYPE_BASE, 
-                            game_state.units[factory_idx].position.x + 20, 
-                            game_state.units[factory_idx].position.y + 20)) {
-                            game_state.players[TEAM_BLUE].points -= 10.0f;
-                        }
-                    }
-                }
-            }
+                 // manual troop spawn removed
         }
 
         // Logic Tick (Fixed Timestep)
@@ -162,9 +138,10 @@ int main(void) {
             }
             
             if (game_state.units[i].attack_fx_timer > 0) {
+                float lw = (game_state.units[i].type == TYPE_HQ) ? 5.0f : 1.5f;
                 DrawLineEx((Vector2){game_state.units[i].position.x + 5, game_state.units[i].position.y + 5}, 
                            (Vector2){game_state.units[i].last_attack_target.x + 5, game_state.units[i].last_attack_target.y + 5}, 
-                           1.5f, (game_state.units[i].team == TEAM_BLUE) ? SKYBLUE : PINK);
+                           lw, (game_state.units[i].team == TEAM_BLUE) ? SKYBLUE : PINK);
             }
             
             if (game_state.units[i].selected) {
@@ -189,7 +166,7 @@ int main(void) {
         // Draw UI
         DrawText(TextFormat("Blue Points: %d", (int)game_state.players[TEAM_BLUE].points), 10, 40, 20, BLUE);
         DrawText(TextFormat("Red Points: %d", (int)game_state.players[TEAM_RED].points), 10, 70, 20, RED);
-        DrawText("Hotkeys: [F]actory (100) | [G]enerator (50) | [T]roop (10) at nearest factory", 10, screenHeight - 30, 20, DARKGRAY);
+        DrawText("Hotkeys: [F]actory (100) | [G]enerator (50)", 10, screenHeight - 30, 20, DARKGRAY);
         
         if (game_state.players[TEAM_BLUE].defeated) {
             DrawText("BLUE DEFEATED!", screenWidth/2 - 200, screenHeight/2, 50, RED);
