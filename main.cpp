@@ -5,15 +5,16 @@
 #define FPS_LIMIT 60
 #define TICK_RATE 60
 
-GameState game_state;
-
 int main(void) {
     // Initialization
     const int screenWidth = 800;
     const int screenHeight = 600;
 
-    InitWindow(screenWidth, screenHeight, "Simple RTS - DOD/C");
+    InitWindow(screenWidth, screenHeight, "Simple RTS - DOD/Nvidia");
     SetTargetFPS(FPS_LIMIT);
+
+    GameState* d_state = game_alloc();
+    GameState& game_state = *d_state;
 
     game_init(&game_state);
 
@@ -177,6 +178,7 @@ int main(void) {
         EndDrawing();
     }
 
+    game_free(d_state);
     CloseWindow();
     return 0;
 }

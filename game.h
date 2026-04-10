@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define MAX_UNITS 20000
+#define MAX_UNITS 100000
 #define MAX_BUILDINGS 1000
 
 #define GRID_WIDTH 40
@@ -40,7 +40,7 @@ typedef struct {
 } Vec2;
 
 typedef struct {
-    bool active;
+    int active; // 0 = false, 1 = true
     bool selected;
     Team team;
     UnitType type;
@@ -76,6 +76,12 @@ typedef struct {
     // Global state
     uint32_t tick_counter;
 } GameState;
+
+// Allocates GameState using cudaMallocManaged
+GameState* game_alloc();
+
+// Frees the allocated game state
+void game_free(GameState* state);
 
 // Initializes the game state
 void game_init(GameState* state);
