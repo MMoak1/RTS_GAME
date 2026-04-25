@@ -3,35 +3,50 @@
 #include <string.h>
 #include <math.h>
 
-void grid_clear(GameState* state) {
-    for (int x = 0; x < GRID_WIDTH; x++) {
-        for (int y = 0; y < GRID_HEIGHT; y++) {
-            state->grid.head[x][y] = -1;
-        }
+
+/*
+GameState* game_alloc() {
+    GameState* state;
+    cudaMallocManaged(&state, sizeof(GameState));
+    return state;
+}
+
+void game_free(GameState* state) {
+    cudaFree(state);
+}
+
+__global__ void kernel_grid_clear(GameState* state) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < GRID_WIDTH * GRID_HEIGHT) {
+        int x = idx / GRID_HEIGHT;
+        int y = idx % GRID_HEIGHT;
+        state->grid.head[x][y] = -1;
     }
 }
 
-void grid_build(GameState* state) {
-    grid_clear(state);
-    for (int i = 0; i < MAX_UNITS; i++) {
-        if (!state->units[i].active) continue;
+__global__ void kernel_grid_build(GameState* state) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < MAX_UNITS) {
+        if (!state->units[i].active) {
+            state->grid.next[i] = -1;
+            return;
+        }
         
         int gx = (int)(state->units[i].position.x / CELL_SIZE);
         int gy = (int)(state->units[i].position.y / CELL_SIZE);
         
         if (gx >= 0 && gx < GRID_WIDTH && gy >= 0 && gy < GRID_HEIGHT) {
-            state->grid.next[i] = state->grid.head[gx][gy];
-            state->grid.head[gx][gy] = i;
+            int old_head = atomicExch(&state->grid.head[gx][gy], i);
+            state->grid.next[i] = old_head;
         } else {
             state->grid.next[i] = -1;
         }
     }
 }
 
-void resolve_collisions(GameState* state) {
-    for (int i = 0; i < MAX_UNITS; i++) {
-        if (!state->units[i].active) continue;
-
+__global__ void kernel_resolve_collisions(GameState* state) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < MAX_UNITS && state->units[i].active) {
         float ux = state->units[i].position.x;
         float uy = state->units[i].position.y;
         float r_i = state->units[i].radius;
@@ -85,9 +100,9 @@ void resolve_collisions(GameState* state) {
     }
 }
 
-void tick_medics(GameState* state) {
-    for (int i = 0; i < MAX_UNITS; i++) {
-        if (!state->units[i].active || state->units[i].type != TYPE_MEDIC) continue;
+__global__ void kernel_tick_medics(GameState* state) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < MAX_UNITS && state->units[i].active && state->units[i].type == TYPE_MEDIC) {
 
         float ux = state->units[i].position.x;
         float uy = state->units[i].position.y;
@@ -107,7 +122,7 @@ void tick_medics(GameState* state) {
                         float dy = uy - state->units[j].position.y;
                         if (dx*dx + dy*dy < 50.0f * 50.0f) {
                             if (state->units[j].health < state->units[j].max_health) {
-                                state->units[j].health += 0.5f;
+                                atomicAdd(&state->units[j].health, 0.5f);
                                 if (state->units[j].health > state->units[j].max_health)
                                     state->units[j].health = state->units[j].max_health;
                                 healed_someone = true;
@@ -144,13 +159,13 @@ void tick_medics(GameState* state) {
     }
 }
 
-void tick_bruisers(GameState* state) {
-    for (int i = 0; i < MAX_UNITS; i++) {
-        if (!state->units[i].active || state->units[i].type != TYPE_BRUISER) continue;
+__global__ void kernel_tick_bruisers(GameState* state) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < MAX_UNITS && state->units[i].active && state->units[i].type == TYPE_BRUISER) {
         
         // If explicitly commanded recently by human, we don't override 
         // For now, let's always gravitate if they are idle
-        if (state->units[i].state == UNIT_MOVING) continue; 
+        if (state->units[i].state == UNIT_MOVING) return; 
 
         float ux = state->units[i].position.x;
         float uy = state->units[i].position.y;
@@ -191,10 +206,14 @@ void tick_bruisers(GameState* state) {
     }
 }
 
-bool game_spawn_unit(GameState* state, Team team, UnitType type, float x, float y) {
+__host__ __device__ bool game_spawn_unit(GameState* state, Team team, UnitType type, float x, float y) {
     for (int i = 0; i < MAX_UNITS; i++) {
+#ifndef __CUDA_ARCH__
         if (!state->units[i].active) {
-            state->units[i].active = true;
+            state->units[i].active = 1;
+#else
+        if (atomicCAS(&state->units[i].active, 0, 1) == 0) {
+#endif
             state->units[i].selected = false;
             state->units[i].team = team;
             state->units[i].type = type;
@@ -222,7 +241,7 @@ bool game_spawn_unit(GameState* state, Team team, UnitType type, float x, float 
                 state->units[i].max_health = 100.0f;
             }
             state->units[i].health = state->units[i].max_health;
-            if (i >= state->unit_count) state->unit_count = i + 1;
+            if (i >= state->unit_count) state->unit_count = i + 1; // Not atomic but harmless if it's slightly off during mass spawns
             return true;
         }
     }
@@ -271,7 +290,7 @@ void game_init(GameState* state) {
     grid_build(state);
 }
 
-float pseudo_random_jitter(int unit_id, uint32_t tick_counter) {
+__device__ float pseudo_random_jitter(int unit_id, uint32_t tick_counter) {
     uint32_t seed = (unit_id * 193) ^ tick_counter;
     seed = (seed ^ 61) ^ (seed >> 16);
     seed *= 9;
@@ -281,9 +300,9 @@ float pseudo_random_jitter(int unit_id, uint32_t tick_counter) {
     return ((seed % 2000) / 1000.0f) - 1.0f;
 }
 
-void tick_movement(GameState* state) {
-    for (int i = 0; i < MAX_UNITS; i++) {
-        if (!state->units[i].active) continue;
+__global__ void kernel_tick_movement(GameState* state) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < MAX_UNITS && state->units[i].active) {
         
         float ux = state->units[i].position.x;
         float uy = state->units[i].position.y;
@@ -440,9 +459,9 @@ void tick_movement(GameState* state) {
     }
 }
 
-void tick_combat(GameState* state) {
-    for (int i = 0; i < MAX_UNITS; i++) {
-        if (!state->units[i].active) continue;
+__global__ void kernel_tick_combat(GameState* state) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < MAX_UNITS && state->units[i].active) {
         
         if (state->units[i].attack_cooldown > 0) {
             state->units[i].attack_cooldown--;
@@ -452,7 +471,7 @@ void tick_combat(GameState* state) {
         }
 
         if (state->units[i].attack_cooldown == 0) {
-            if (state->units[i].type == TYPE_FACTORY || state->units[i].type == TYPE_GENERATOR) continue;
+            if (state->units[i].type == TYPE_FACTORY || state->units[i].type == TYPE_GENERATOR) return;
 
             float ux = state->units[i].position.x;
             float uy = state->units[i].position.y;
@@ -497,54 +516,57 @@ void tick_combat(GameState* state) {
                 }
             }
 
-            if (target_idx != -1) {
-                state->units[target_idx].health -= damage;
+            if (target_idx != -1) { // Apply damage safely across threads
+                atomicAdd(&state->units[target_idx].health, -damage);
                 state->units[i].attack_cooldown = cooldown;
                 state->units[i].attack_fx_timer = fx;
                 state->units[i].last_attack_target = state->units[target_idx].position;
             }
         }
     }
-    
-    // Death Cleanup
-    for (int i = 0; i < MAX_UNITS; i++) {
-        if (state->units[i].active && state->units[i].health <= 0) {
-            if (state->units[i].type == TYPE_HQ) {
-                state->players[state->units[i].team].defeated = true;
-            }
-            state->units[i].active = false;
+}
+
+__global__ void kernel_tick_combat_death(GameState* state) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < MAX_UNITS && state->units[i].active && state->units[i].health <= 0) {
+        if (state->units[i].type == TYPE_HQ) {
+            state->players[state->units[i].team].defeated = true;
         }
+        state->units[i].active = false;
     }
 }
 
-void tick_economy(GameState* state) {
-    if (state->players[TEAM_BLUE].defeated || state->players[TEAM_RED].defeated) {
-        return;
+__global__ void kernel_tick_economy(GameState* state) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    
+    // Only one thread should handle passive income
+    if (i == 0) {
+        if (!state->players[TEAM_BLUE].defeated && !state->players[TEAM_RED].defeated) {
+            atomicAdd(&state->players[TEAM_BLUE].points, 1.0f / 60.0f);
+            atomicAdd(&state->players[TEAM_RED].points, 1.0f / 60.0f);
+        }
     }
     
-    state->players[TEAM_BLUE].points += 1.0f / 60.0f; // passive income
-    state->players[TEAM_RED].points += 1.0f / 60.0f;
-    
-    for (int i=0; i<MAX_UNITS; i++) {
-        if (state->units[i].active) {
-            if (state->units[i].type == TYPE_HQ) {
-                state->players[state->units[i].team].points += 2.0f / 60.0f;
-            } else if (state->units[i].type == TYPE_GENERATOR) {
-                state->players[state->units[i].team].points += 5.0f / 60.0f;
-            } else if (state->units[i].type == TYPE_FACTORY) {
-                if ((state->tick_counter + i) % 180 == 0) { // Produce 1 free unit every 3 seconds
-                    float sx = state->units[i].position.x + 30.0f * (state->units[i].team == TEAM_BLUE ? 1 : -1);
-                    float sy = state->units[i].position.y + (((i % 3) - 1) * 15.0f);
-                    
-                    int r = (state->tick_counter + i) % 100;
-                    UnitType type = TYPE_BASE;
-                    if (r < 10) type = TYPE_BRUISER;
-                    else if (r < 20) type = TYPE_AGGRESSOR;
-                    else if (r < 25) type = TYPE_REPELLER;
-                    else if (r < 30) type = TYPE_MEDIC;
-                    
-                    game_spawn_unit(state, state->units[i].team, type, sx, sy);
-                }
+    if (i < MAX_UNITS && state->units[i].active) {
+        if (state->players[TEAM_BLUE].defeated || state->players[TEAM_RED].defeated) return;
+        
+        if (state->units[i].type == TYPE_HQ) {
+            atomicAdd(&state->players[state->units[i].team].points, 2.0f / 60.0f);
+        } else if (state->units[i].type == TYPE_GENERATOR) {
+            atomicAdd(&state->players[state->units[i].team].points, 5.0f / 60.0f);
+        } else if (state->units[i].type == TYPE_FACTORY) {
+            if ((state->tick_counter + i) % 180 == 0) { // Produce 1 free unit every 3 seconds
+                float sx = state->units[i].position.x + 30.0f * (state->units[i].team == TEAM_BLUE ? 1 : -1);
+                float sy = state->units[i].position.y + (((i % 3) - 1) * 15.0f);
+                
+                int r = (state->tick_counter + i) % 100;
+                UnitType type = TYPE_BASE;
+                if (r < 10) type = TYPE_BRUISER;
+                else if (r < 20) type = TYPE_AGGRESSOR;
+                else if (r < 25) type = TYPE_REPELLER;
+                else if (r < 30) type = TYPE_MEDIC;
+                
+                game_spawn_unit(state, state->units[i].team, type, sx, sy);
             }
         }
     }
@@ -553,23 +575,27 @@ void tick_economy(GameState* state) {
 void game_tick(GameState* state) {
     state->tick_counter++;
     
-    // AI decisions
+    // AI decisions (CPU side)
     ai_tick(state, TEAM_RED);
     
-    tick_economy(state);
-    tick_medics(state);
-    tick_bruisers(state);
+    int threads = 256;
+    int blocks = (MAX_UNITS + threads - 1) / threads;
+
+    kernel_tick_economy<<<blocks, threads>>>(state);
+    kernel_tick_medics<<<blocks, threads>>>(state);
+    kernel_tick_bruisers<<<blocks, threads>>>(state);
     
-    tick_movement(state);
+    kernel_tick_movement<<<blocks, threads>>>(state);
     
-    // Separation / Collision Avoidance
-    resolve_collisions(state);
+    kernel_resolve_collisions<<<blocks, threads>>>(state);
     
-    // Hitscan Combat
-    tick_combat(state);
+    kernel_tick_combat<<<blocks, threads>>>(state);
+    kernel_tick_combat_death<<<blocks, threads>>>(state);
     
-    // Rebuild spatial grid since positions changed or units died
-    grid_build(state);
+    kernel_grid_clear<<<(GRID_WIDTH * GRID_HEIGHT + threads - 1)/threads, threads>>>(state);
+    kernel_grid_build<<<blocks, threads>>>(state);
+    
+    cudaDeviceSynchronize();
 }
 
 void command_move_selected(GameState* state, float target_x, float target_y) {
@@ -581,3 +607,5 @@ void command_move_selected(GameState* state, float target_x, float target_y) {
         state->units[i].target_pos.y = target_y;
     }
 }
+
+*/
