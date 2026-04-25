@@ -1,4 +1,5 @@
 #include "ai.h"
+#include "game.h"
 
 void ai_tick(GameState* state, Team team) {
     if (state->players[team].defeated) return;

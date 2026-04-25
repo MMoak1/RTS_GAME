@@ -3,6 +3,8 @@
 #include <string.h>
 #include <math.h>
 
+
+/*
 GameState* game_alloc() {
     GameState* state;
     cudaMallocManaged(&state, sizeof(GameState));
@@ -605,3 +607,5 @@ void command_move_selected(GameState* state, float target_x, float target_y) {
         state->units[i].target_pos.y = target_y;
     }
 }
+
+*/
