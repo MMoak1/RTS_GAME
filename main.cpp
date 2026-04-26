@@ -1,22 +1,48 @@
 #include <raylib.h>
 #include <math.h>
+#include <string.h>
+#include <stdio.h>
 #include "game.h"
 
 #define FPS_LIMIT 60
 #define TICK_RATE 60
 
-int main(void) {
-    // Initialization
-    const int screenWidth = 800;
-    const int screenHeight = 600;
-
-    InitWindow(screenWidth, screenHeight, "Simple RTS - DOD/Nvidia");
-    SetTargetFPS(FPS_LIMIT);
-
+int main(int argc, char** argv) {
     GameState* d_state = game_alloc();
     GameState& game_state = *d_state;
 
     game_init(&game_state);
+
+    game_state.headless = false;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--headless") == 0) {
+            game_state.headless = true;
+        }
+    }
+
+    if (game_state.headless) {
+        printf("Running in headless mode for AI training...\n");
+        int ticks = 0;
+        while (true) {
+            game_tick(&game_state);
+            ticks++;
+            
+            if (game_state.players[TEAM_BLUE].defeated) {
+                printf("BLUE DEFEATED after %d ticks!\n", ticks);
+                break;
+            }
+            if (game_state.players[TEAM_RED].defeated) {
+                printf("RED DEFEATED after %d ticks!\n", ticks);
+                break;
+            }
+        }
+    } else {
+        // Initialization
+        const int screenWidth = 800;
+        const int screenHeight = 600;
+
+        InitWindow(screenWidth, screenHeight, "Simple RTS - DOD/Nvidia");
+        SetTargetFPS(FPS_LIMIT);
 
     float tick_timer = 0.0f;
     float time_per_tick = 1.0f / TICK_RATE;
@@ -178,7 +204,9 @@ int main(void) {
         EndDrawing();
     }
 
+        CloseWindow();
+    }
+
     game_free(d_state);
-    CloseWindow();
     return 0;
 }

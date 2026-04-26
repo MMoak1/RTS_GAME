@@ -1,0 +1,20 @@
+--- ai.cpp
++++ ai.cpp
+@@ -16,6 +16,8 @@
+     bool found_enemy = false;
+ 
+     // Analyze State
++    printf("AI TICK! team=%d, ticks=%d\n", team, state->tick_counter);
++
+     for (int i = 0; i < MAX_UNITS; i++) {
+         if (!state->units[i].active) continue;
+         
+@@ -34,6 +36,8 @@
+         }
+     }
+ 
++    printf("AI analyzed: troop_count=%d, factory_count=%d, generator_count=%d, pts=%f, found_enemy=%d\n", troop_count, factory_count, generator_count, state->players[team].points, found_enemy);
++
+     // Economy Strategy
+     if (state->players[team].points >= 50.0f && generator_count < 3) {
+         float px = my_hq_pos.x + 40.0f;

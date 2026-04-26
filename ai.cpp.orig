@@ -1,13 +1,11 @@
 #include "ai.h"
 #include "game.h"
-#include <iostream>
 
 void ai_tick(GameState* state, Team team) {
     if (state->players[team].defeated) return;
 
     // Throttle decisions to 1 per second (simulated APM)
     if ((state->tick_counter + team * 30) % 60 != 0) return;
-    std::cout << "AI running for team " << team << " at tick " << state->tick_counter << "!\n";
 
     int factory_count = 0;
     int generator_count = 0;

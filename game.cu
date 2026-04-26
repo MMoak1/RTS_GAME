@@ -580,8 +580,12 @@ __global__ void kernel_tick_economy(GameState* state) {
 void game_tick(GameState* state) {
     state->tick_counter++;
     
-    // AI decisions (CPU side)
+    // Red should always have AI running, Blue only in headless mode
     ai_tick(state, TEAM_RED);
+    
+    if(state->headless) {
+        ai_tick(state, TEAM_BLUE);
+    }
     
     int threads = 256;
     int blocks = (MAX_UNITS + threads - 1) / threads;
@@ -612,4 +616,4 @@ void command_move_selected(GameState* state, float target_x, float target_y) {
         state->units[i].target_pos.y = target_y;
     }
 }
-
+

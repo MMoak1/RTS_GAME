@@ -70,6 +70,7 @@ typedef struct {
     PlayerData players[2];
     Unit units[MAX_UNITS];
     int unit_count; // Number of currently active units, or max active index
+    bool headless;  
     
     SpatialGrid grid;
     

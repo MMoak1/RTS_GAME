@@ -1,0 +1,16 @@
+--- main.cpp
++++ main.cpp
+@@ -19,13 +19,13 @@
+ 
+     game_init(&game_state);
+ 
++    game_state.headless = false;
++    for (int i = 1; i < argc; i++) {
++        if (strcmp(argv[i], "--headless") == 0) {
++            game_state.headless = true;
++        }
++    }
++
+     if (game_state.headless) {
+         printf("Running in headless mode for AI training...\n");
+         int ticks = 0;
