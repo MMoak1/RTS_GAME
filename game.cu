@@ -4,7 +4,7 @@
 #include <math.h>
 
 
-/*
+
 GameState* game_alloc() {
     GameState* state;
     cudaMallocManaged(&state, sizeof(GameState));
@@ -250,7 +250,9 @@ __host__ __device__ bool game_spawn_unit(GameState* state, Team team, UnitType t
 
 void game_init(GameState* state) {
     memset(state, 0, sizeof(GameState));
-    grid_clear(state);
+    int threads = 256;
+    kernel_grid_clear<<<(GRID_WIDTH * GRID_HEIGHT + threads - 1)/threads, threads>>>(state);
+    cudaDeviceSynchronize();
     
     state->players[TEAM_BLUE].points = 150.0f;
     state->players[TEAM_RED].points = 150.0f;
@@ -287,7 +289,10 @@ void game_init(GameState* state) {
         game_spawn_unit(state, TEAM_RED, type, x, y);
     }
     
-    grid_build(state);
+    int threads2 = 256;
+    int blocks = (MAX_UNITS + threads2 - 1) / threads2;
+    kernel_grid_build<<<blocks, threads2>>>(state);
+    cudaDeviceSynchronize();
 }
 
 __device__ float pseudo_random_jitter(int unit_id, uint32_t tick_counter) {
@@ -607,5 +612,4 @@ void command_move_selected(GameState* state, float target_x, float target_y) {
         state->units[i].target_pos.y = target_y;
     }
 }
-
-*/
+
